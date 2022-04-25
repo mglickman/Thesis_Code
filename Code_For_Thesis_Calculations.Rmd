@@ -1,0 +1,721 @@
+---
+title: "Code for Calculations Performed in 'Economic Motivators and Traits'"
+author: "Moses Glickman"
+date: "4/21/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Reading in Datasets
+```{r, echo=T}
+library(tidyverse)
+library(haven)
+ess18 <- read_dta("ESS_2018.dta")
+ees19 <- read_dta("ees_2019.dta")
+evs_joint <- read_dta("evsjoint.dta")
+```
+###Time fixed effects
+```{r, echo=T}
+ess18$date_fe <- as.factor(ess18$inwyye)
+ees19$date_fe <- as.factor(2019)
+evs_joint$date_fe <- as.factor(evs_joint$year)
+```
+
+
+##Addition of national dummies
+```{r, echo=T}
+#National dummies
+ees19$natdummy <- substr(ees19$region_NUTS1,1,2)
+ees19$natdummy[ees19$natdummy=="96"] <- "FR"
+evs_joint$natdummy <- evs_joint$cntry_AN
+ess18$natdummy <- ess18$cntry
+```
+
+###Adding in dataset dummies
+```{r, echo=T}
+#1=WVS,2=EVS,3=EEs,4=ESS
+evs_joint$datadummy = ifelse(evs_joint$studytit=="WVS7",1,2)
+ees19$datadummy = 3
+ess18$datadummy = 4
+```
+
+###Dataset Party Integration: EES
+```{r,echo=T}
+ees_parties <- read.csv("ees_parties.csv")
+ees_parties$Q9 <- ees_parties$Value..Q9. 
+ees_parties[is.na(ees_parties)| is.null(ees_parties)]=0
+eeslab <- merge(ees19, ees_parties, by="Q9")
+```
+
+```{r, echo=T}
+esstoy <- ess18
+esstoy_a <- esstoy[,c(26:31,32:45,48:57)]
+esstoy_a[is.na(esstoy_a)]<-0
+esstoy[,c(26:31,32:45,48:57)] <- esstoy_a
+esstoy$party <- apply(esstoy[,c(26:31,32:45,48:57)],1,max,na.rm=T)
+ess_parties <- read.csv("ess_parties.csv")
+ess_parties[is.na(ess_parties) | is.null(ess_parties)]=0
+esslab <- merge(esstoy, ess_parties, by.x=c("cntry","party"),by.y=c("Abbreviation","Value"))
+```
+
+```{r, echo=T}
+evs_parties <- read.csv("evs_parties.csv")
+evs_parties[is.na(evs_parties) | is.null(evs_parties)]<-0
+evslab <- merge(evs_joint, evs_parties, by.x="E181_EVS5", by.y="Value")
+evs_joint_greece <- filter(evs_joint, cntry_AN == "GR")
+evslabgreece <- merge(evs_joint_greece, evs_parties, by.x="E179_WVS7", by.y="Value")
+evslab <- rbind.data.frame(evslab, evslabgreece)
+```
+
+
+
+###Manifesto references
+```{r, echo=T}
+#Middle class prof: per704
+#Labor unions: per701
+#Welfare state exp: per504
+#Immigration: per602_2
+#Environmentalism: per501
+#EU/European Community: per108
+```
+
+
+### Drop pre-election variables from selected surveys
+```{r, echo=T}
+#ESS
+#inwdds, inwmms, inwyys
+esslabdrop <- filter(esslab,
+  (cntry != "PT" | (inwyys > 2019) | 
+     (inwyys == 2019 & inwmms > 10) | 
+     (inwyys==2019 & inwmms == 10 & inwdds > 6)) &
+  (cntry != "SE" | (inwyys > 2018) | 
+     (inwyys == 2018 & inwmms > 9) | 
+     (inwyys==2018 & inwmms == 9 & inwdds > 9)) &
+  (cntry != "ES" | (inwyys > 2019) | 
+     (inwyys == 2019 & inwmms > 11) | 
+     (inwyys==2019 & inwmms == 11 & inwdds > 10)))
+#EES
+eeslabdrop <- filter(eeslab,
+    (Nation == "Greece"))
+eeslabdrop <- eeslabdrop[order(eeslabdrop$meta_start_date),][618:700,]
+eeslabdrop <- rbind.data.frame(eeslabdrop, filter(eeslab, Nation != "Greece"))
+#EVS
+evslabdrop <- filter(evslab, 
+        (cntry_AN != "CZ" | ivdate > 20171021) & 
+        (cntry_AN != "HU" | ivdate > 20180408) &
+        (cntry_AN != "IS" | ivdate > 20171028))
+```
+
+
+###Integration of national factors
+```{r, echo=T}
+natfac <- read.csv("national_factors.csv")
+natfac_evs <- filter(natfac, EVS==1)
+natfac_ees <- filter(natfac, EES==1)
+natfac_ess <- filter(natfac, ESS==1)
+evsnat <- merge(evslabdrop, natfac_evs, by.x="cntry_AN", by.y="NatCode")
+essnat <- merge(esslabdrop, natfac_ess, by.x="cntry", by.y="NatCode")
+eesnat <- merge(eeslabdrop, natfac_ees, by.x="Nation", by.y="Nation")
+```
+
+##Comments for dataset var representation
+
+```{r, echo=T}
+###Union data
+eesnat$Union <- as.numeric(eesnat$D1 %in% c(1,3))
+essnat$Union <- as.numeric(essnat$mbtru == 1)
+evsnat$Union <- as.numeric(evsnat$A067==1)
+###ees19$D1 = 1 or =3: yes, trade union member
+###ess18$mbtru = 1: yes, trade union member
+###evs_joint$A067 = 1: yes, trade union member
+```
+
+```{r, echo=T}
+###Gender
+#0=male, 1=female, 2=oth
+evsnat$Gender <- as.factor(pmin(2, abs(evsnat$X001 - 1)))
+essnat$Gender <- as.factor(essnat$gndr - 1)
+eesnat$Gender <- as.factor(eesnat$D3 - 1)
+###evs_joint$X001 = 2, female; 1, male, -5, other
+###ess18$gndr = 2, female; 1, male
+###ees19$D3 = 2, female; 1, male; 3, other
+```
+
+```{r, echo=T}
+###Age
+evsnat$Age <- as.numeric(evsnat$X003)
+evsnat$Age[evsnat$Age < 16] <- NA
+essnat$Age <- as.numeric(essnat$agea)
+eesnat$Age <- 2019-eesnat$D4_1
+###(2019-ees19$D4_1) = age
+###ess19$agea = age
+###evs_joint$X003 = age, missing if <16; 82 = 82+
+```
+
+```{r, echo=T}
+###Income
+##EVS
+evsnat$Income <- as.numeric(pmax(evsnat$X047_WVS7, evsnat$X047E_EVS5))
+evsnat$Income[evsnat$Income < 1] <- NA
+##ESS
+essnat$Income <- essnat$hinctnta
+##EES
+eesnat$Income <- as.numeric(eesnat$D11)
+eesnat$Income[eesnat$Income > 7] <- NA
+eesmean <- mean(eesnat$Income, na.rm=T)
+decmean <- mean(c(essnat$Income, evsnat$Income), na.rm=T)
+eesnat$Income <- eesnat$Income*decmean/eesmean
+rm(eesmean, decmean)
+```
+
+
+```{r, echo=T}
+###Marital status
+eesnat$MarStat <- eesnat$D5 %in% c(1:4)
+essnat$MarStat <- essnat$maritalb==1
+evsnat$MarStat <- evsnat$X007
+evsnat$MarStat[evsnat$MarStat < 1] <- NA
+evsnat$MarStat <- evsnat$MarStat == 1
+```
+
+```{r, echo=T}
+##Current/former public worker
+essnat$PubWork <- essnat$tporgwk %in% c(1:3)
+eesnat$PubWork <- eesnat$D6a
+eesnat$PubWork[eesnat$PubWork > 95] <- NA
+eesnat$PubWork <- eesnat$PubWork==2 | eesnat$PubWork==4
+evsnat$PubWork <- evsnat$X052
+evsnat$PubWork[evsnat$PubWork<1] <- NA
+evsnat$PubWork <- evsnat$PubWork==1
+##Public worker (or fpw)
+##public worker if ess18$tporgwk = 1,2,3
+##public worker if ess19$D6a = 2,4
+##public worker if evs_joint$X052 = 1
+```
+
+```{r, echo=T}
+###EU/Europarl trust
+evsnat$EuroTrust <- evsnat$E069_18
+evsnat$EuroTrust[evsnat$EuroTrust < 1] <- NA
+evsnat$EuroTrust <- 5-evsnat$EuroTrust
+eesnat$EuroTrust <- eesnat$Q18_2
+eesnat$EuroTrust[eesnat$EuroTrust > 6] <- NA
+eesnat$EuroTrust <- 6-eesnat$EuroTrust
+essnat$EuroTrust <- essnat$trstep
+essmean <- mean(essnat$EuroTrust, na.rm=T)
+evsmean <- mean(evsnat$EuroTrust, na.rm=T)
+eesmean <- mean(eesnat$EuroTrust, na.rm=T)
+evsnat$EuroTrust <- evsnat$EuroTrust * 5 / evsmean
+essnat$EuroTrust <- essnat$EuroTrust * 5 / essmean
+eesnat$EuroTrust <- eesnat$EuroTrust * 5 / eesmean
+rm(essmean, evsmean, eesmean)
+###for non-EU countries av is limited in EVS
+###but evs_joint$E069_18 = 4 means no trust in EU
+##ess18$trstep 0-10, incr trust, for Europarl
+##ees19$Q18_2 1-5, with decr. trust, for Europarl
+```
+
+
+```{r, echo=T}
+###Urb/rural
+eesnat$Urban <- eesnat$D8 != 1
+essnat$Urban <- essnat$domicil == 1 | essnat$domicil==2 | essnat$domicil==3
+evsnat$Urban <- evsnat$size_5c %in% c(3:5)
+#ees19$D8 : 1-rural; 2-small/med town; 3-large town
+#ess18$domicil: 1- big city; 2-suburbs; 3-small city; 4-country village; 5-farm/jome in cside
+#evs_joint$size_5c: 1-<5k, 2<20k, 3<100k, 4<500k, 5 500k+
+```
+
+```{r, echo=T}
+##Education
+##EVS
+evsnat$Edu <- evsnat$X025A_01
+evsnat$Edu <- (evsnat$Edu %in% c(0:1)) +
+  2*(evsnat$Edu == 2) + 3*(evsnat$Edu==3) +
+  4*(evsnat$Edu %in% c(4:5)) +
+  5*(evsnat$Edu == 6) +
+  6*(evsnat$Edu>6)
+evsnat$Edu[evsnat$Edu == 0] <- NA
+evsnat$Edu <- as.factor(evsnat$Edu)
+##ESS
+essnat$Edu <- essnat$eisced
+essnat$Edu[essnat$Edu>9]<-NA
+essnat$Edu <- (essnat$Edu==1) + 2*(essnat$Edu==2) +
+  3*(essnat$Edu %in% c(3,4)) + 4*(essnat$Edu==5) +
+  5*(essnat$Edu==6) + 6*(essnat$Edu>6)
+essnat$Edu <- as.factor(essnat$Edu)
+##EES
+eesnat$Edu <- eesnat$D2
+eesnat$Edu[eesnat$Edu==97] <- eesnat$Age[eesnat$Edu==97]
+eesnat$Edu[eesnat$Edu==99] <- NA
+eesnat$Edu <- 1 + (eesnat$Edu>=13) + (eesnat$Edu>=17) +
+  (eesnat$Edu>=20) + (eesnat$Edu>=22) +
+  (eesnat$Edu>=25)
+eesnat$Edu <- as.factor(eesnat$Edu)
+#Category ESS; EVS; EES
+#Primary 1; 0-1. <13
+#Lower Secondary 2; 2, <17
+#HS 3,4; 3, <20
+#Assoc 5; 4-5, <=21
+#Bach 6; 6; <=23
+#Grad 7; 7-8 >24
+#primary school ends at <13
+#secondary at <17
+#HS < 
+#Bachelor <= 23
+#Grad >23
+##ess saved in Educode
+##ees19$D2: age left edu, 97=still studying
+##evs_joint$X025A_01: <0 missing, saved
+```
+
+```{r, echo=T}
+##Empl status
+evsnat$Empl <- evsnat$X028
+evsnat$Empl[evsnat$Empl<1] <- NA
+evsnat$Empl <- as.numeric((evsnat$Empl==1) + (evsnat$Empl==3))
+essnat$Empl <- as.numeric(essnat$mnactic==1)
+eesnat$Empl <- as.numeric(eesnat$D6 %in% c(1,2))
+#evs_joint$X028 1=fulltime,2=ptime,3=selfemp,7=unemp
+#ees19$D6 2=emp,1=selfemp,6=unemp
+#ess18$mnactic 1=paid work, 3=unemp looking, 4=unemp nlooking
+```
+
+
+### Dataset trimming
+```{r, echo=T}
+ess_formerge <- essnat[,c(574:576, 578, 580:619)]
+ees_formerge <- eesnat[,c(131:133, 135, 138:143, 1, 145:177)]
+evs_formerge <- evsnat[,232:277]
+evs_formerge <- evs_formerge[,-c(4,6)]
+colnames(evs_formerge)[11] <- "Nation"
+colnames(ess_formerge)[11] <- "Nation"
+merged_db <- rbind.data.frame(ess_formerge, ees_formerge, evs_formerge)
+merged_db$FarR[merged_db$FarR != 1] <- 0
+merged_db$FarR <- as.numeric(merged_db$FarR)
+```
+
+### Portugal income imputation
+```{r, echo=T}
+portugal_db <- filter(merged_db, Nation=="Portugal", Election=="10/4/2015")
+model <- lm(Income~Empl+Gender+Edu+Urban+PubWork+Age+EuroTrust,data=portugal_db)
+library(car)
+pdb2 <- filter(merged_db, Nation=="Portugal", Election!="10/4/2015")
+pdb2$Income <- Predict(model, pdb2, se=TRUE)$fit
+merged_db <- rbind.data.frame(filter(merged_db, Nation != "Portugal" | Election == "10/4/2015"),pdb2)
+```
+
+### Incorp of population for weighting
+```{r, echo=T}
+##https://data.worldbank.org/indicator/SP.POP.TOTL
+##psize function is (population*avgleft/#resp) / mean(population*avgleft/#resp) 
+##popsize func is (population/#resp) / mean(population/#resp) 
+##equal weighting is #resp/mean(#resp)
+popdb <- read.csv("population_db.csv")
+merged_db <- merge(merged_db, popdb, by="Nation")
+nattab <- as.data.frame(table(merged_db$Nation))
+colnames(nattab) <- c("Nation", "Frequency")
+merged_db <- merge(merged_db, nattab, by="Nation")
+merged_db$eqweight <- 1 / merged_db$Frequency
+merged_db$eqweight <- merged_db$eqweight / mean(merged_db$eqweight)
+ratepop <- mean(merged_db$Population/merged_db$Frequency)
+merged_db$popweight <- merged_db$Population / (merged_db$Frequency * ratepop)
+```
+
+###Generation of education regression (internal use, not necessary to run)
+```{r, echo=T}
+#library(dplyr)
+#library(olsrr)
+#mdb_nees <- filter(merged_db, datadummy !=3)
+#mdb_nees$Edu <- as.numeric(mdb_nees$Edu)
+#model <- lm(Edu~Income+Empl+Gender+Urban+EuroTrust+PubWork+Age+MarStat+Union+Nation+Left+CenR+CLib.G+FarR+NI+Comm, data=mdb_nees)
+#ols_step_both_p(model)
+#Income, Empl, PubWork, Age, Union, Nation, Urban, EuroTrust, CLib.G
+#mod2 <- lm(Edu~Income+Empl+PubWork+Age+Union+Urban+EuroTrust+CLib.G, data=mdb_nees)
+#library(car)
+#ees_model <- ees_formerge
+#ees_model$Edu2 <- as.numeric(ees_model$Edu)
+#ees_model$Edu <- Predict(mod2, ees_model, se=TRUE)$fit
+#mean(ees_model$Edu,na.rm=T)
+#mean(ees_model$Edu2,na.rm=T)
+#summary(lm(Left~Age+Gender+Income+Empl+Edu+Urban, data=mdb_nees))
+#summary(lm(Left~Age+Gender+Income+Empl+Edu+Urban, data=ees_model))
+#summary(lm(Left~Age+Gender+Income+Empl+Edu2+Urban, data=ees_model))
+```
+
+
+### Gallagher testing (internal use, not necessary to run)
+
+```{R, echo=T}
+#summary(glm(Left~Age+Gender+Income+I(Union*WelfPos)+Union+Consol, data=merged_db))
+#summary(glm(Left~Age+Gender+Income+I(Union*WelfPos)+Union+Gallagher_LSq, data=merged_db))
+#summary(glm(Left~Age+Gender+Income+I(Union*WelfPos)+Union+Gallagher_Prev_LSq, data=merged_db))
+#summary(glm(Left~Age+Gender+Income+I(Union*WelfPos)+Union+Gallagher_ENEP, data=merged_db))
+#summary(glm(Left~Age+Gender+Income+I(Union*WelfPos)+Union+Consol+Gallagher_LSq+Gallagher_Prev_ENEP+Gallagher_ENEP+Gallagher_Prev_LSq, data=merged_db))
+
+##Current ENEP more useful than former; current LSq less useful than former
+```
+
+### Creating by-nation table of party categories above inclusion threshold
+```{r, echo=T}
+merged_db$PSec <- as.factor(merged_db$Left + 2*merged_db$CenR + 3*merged_db$CLib.G + 4*merged_db$FarR + 5*merged_db$NI + 6*merged_db$Comm)
+levels(merged_db$PSec) <- c("Left", "CenR", "CLib.G", "FarR", "NI", "Comm")
+mdb_junk <- merged_db
+mdb_junk$UnionYes = ifelse(mdb_junk$Union==1, mdb_junk$PSec=="Left", NA)
+mdb_junk$PubYes = ifelse(mdb_junk$PubWork==1, mdb_junk$PSec=="Left", NA)
+mdb_junk$UrbYes = ifelse(mdb_junk$Urban==1, mdb_junk$PSec=="Left", NA)
+mdb_junk$EuroYes = ifelse(mdb_junk$PSec=="Left", mdb_junk$EuroTrust, NA)
+mdb_junk$IncomeAvg = ifelse(mdb_junk$PSec=="Left", mdb_junk$Income, NA)
+mdb_junk <- mdb_junk %>% group_by(Nation, Election) %>% summarise(avgcomm=mean(Comm), avgni=mean(NI), avgleft = mean(Left), avgcenr=mean(CenR), avgclibg=mean(CLib.G), avgfarr=mean(FarR), avgunion=mean(Union, na.rm=T),avgpubwork=mean(PubWork, na.rm=T), Population=mean(Population),popweight=mean(popweight),eqweight=mean(eqweight),
+                                                                  unionp = mean(UnionYes, na.rm=T), pubp = mean(PubYes, na.rm=T), urbp = mean(UrbYes, na.rm=T), IncomeAvg = mean(IncomeAvg, na.rm=T), euromean = mean(EuroTrust, na.rm=T), europ = mean(EuroYes, na.rm=T))
+mdb_junk$Comm <- as.numeric(mdb_junk$avgcomm > 0.05)
+mdb_junk$NI <- as.numeric(mdb_junk$avgni > 0.05)
+mdb_junk$Left <- as.numeric(mdb_junk$avgleft > 0.05)
+mdb_junk$CenR <- as.numeric(mdb_junk$avgcenr > 0.05)
+mdb_junk$FarR <- as.numeric(mdb_junk$avgfarr > 0.05)
+mdb_junk$CLib.G <- as.numeric(mdb_junk$avgclibg > 0.05)
+mdb_junk$union_prem <- mdb_junk$unionp - mdb_junk$avgleft
+mdb_junk$union_prop_prem <- mdb_junk$unionp / mdb_junk$avgleft
+mdb_junk$pub_prem <- mdb_junk$pubp - mdb_junk$avgleft
+mdb_junk$pub_prop_prem <- mdb_junk$pubp / mdb_junk$avgleft
+mdb_junk$urb_prem <- mdb_junk$urbp - mdb_junk$avgleft
+mdb_junk$urb_prop_prem <- mdb_junk$urbp / mdb_junk$avgleft
+mdb_junk$euro_prem <- mdb_junk$europ - mdb_junk$euromean
+mdb_junk$euro_prop_prem <- mdb_junk$europ / mdb_junk$avgleft
+
+```
+
+###Generating function to filter party categories
+```{r, echo=T}
+library(dfidx)
+library(mlogit)
+library(nnet)
+library(dplyr)
+trimdown <- function(cname, elec){
+  indices = colnames(mdb_junk)[which(filter(mdb_junk, Nation==cname & Election==elec)==1)]
+  mdb_junk_1 <- filter(merged_db, Nation==cname & Election==elec & PSec %in% indices)
+  mdb_junk_1$PSec <- as.factor(as.character(mdb_junk_1$PSec))
+  test <- multinom(PSec~Union+Gender+PubWork+Edu+Empl+Urban+Income+EuroTrust+Age+MarStat, data=mdb_junk_1)
+  z <- summary(test)$coefficients/summary(test)$standard.errors
+# 2-tailed Wald z tests to test significance of coefficients
+  p <- (1 - pnorm(abs(z), 0, 1)) * 2
+  return(test)
+  print(p)
+}
+regcount <- function(cname, elec){
+  indices = colnames(mdb_junk)[which(filter(mdb_junk, Nation==cname, Election==elec)==1)]
+  return(indices)
+}  
+```
+
+###By-Nation Regression
+
+```{r, echo=T}
+unionval_table <- mdb_junk
+unionval_table <- merge(unionval_table, natfac, by=c("Nation", "Election"))
+nlist <- unionval_table$Nation
+unionval_table$Population2 <- unionval_table$Population
+for(i in 1:length(unionval_table$Population2)){
+  unionval_table$Population2[i] <- unionval_table$Population2[i] / sum(nlist==unionval_table$Nation[i])
+}
+
+## Weighted
+summary(lm(union_prem~BigRPFR+EUPos+EnviPos+LaborPos+WelfPos+ImmigPos+MCPPos+Comm,data=unionval_table, weights=unionval_table$Population2))
+summary(lm(pub_prem~BigRPFR+EUPos+EnviPos+LaborPos+WelfPos+ImmigPos+MCPPos+Comm,data=unionval_table, weights=unionval_table$Population2))
+summary(lm(urb_prem~BigRPFR+EUPos+EnviPos+LaborPos+WelfPos+ImmigPos+MCPPos+Comm,data=unionval_table, weights=unionval_table$Population2))
+summary(lm(IncomeAvg~BigRPFR+EUPos+EnviPos+LaborPos+WelfPos+ImmigPos+MCPPos+Comm,data=unionval_table, weights=unionval_table$Population2))
+summary(lm(euro_prem~BigRPFR+EUPos+EnviPos+LaborPos+WelfPos+ImmigPos+MCPPos+Comm,data=unionval_table, weights=unionval_table$Population2))
+
+## Robustness check
+summary(lm(union_prem~BigRPFR+EUPos+EnviPos+LaborPos+WelfPos+ImmigPos+MCPPos+Comm,data=unionval_table))
+summary(lm(pub_prem~BigRPFR+EUPos+EnviPos+LaborPos+WelfPos+ImmigPos+MCPPos+Comm,data=unionval_table))
+summary(lm(urb_prem~BigRPFR+EUPos+EnviPos+LaborPos+WelfPos+ImmigPos+MCPPos+Comm,data=unionval_table))
+summary(lm(IncomeAvg~BigRPFR+EUPos+EnviPos+LaborPos+WelfPos+ImmigPos+MCPPos+Comm,data=unionval_table))
+summary(lm(euro_prem~BigRPFR+EUPos+EnviPos+LaborPos+WelfPos+ImmigPos+MCPPos+Comm,data=unionval_table))
+```
+
+
+### Plot of party categories by nation
+
+```{r, echo=T}
+merged_db_1 <- filter(merged_db, Nation != "Azerbaijan")
+
+### All-in-one plot
+plot1 <- ggplot(data=merged_db_1, 
+              aes(fill=PSec, x=Nation))+
+          geom_bar(position="fill",stat="count")+
+          scale_fill_manual(labels = c("Social Democratic", "Center Right",
+                                       "Liberal/Green", "Far Right",
+                                       "Other/NI", "Communist"),
+            values=c("red1","dodgerblue", "yellow", 
+            "darkblue", "ivory4","red4")) +
+          labs(x="Nation", y="Vote Share",
+               fill="Party Category") +
+          ggtitle("Party Category Vote Shares by Nation") +
+          theme_bw() + scale_x_discrete(guide=guide_axis(n.dodge=2))
+        
+
+ggsave("party_cat_plot.png", plot1, width=15, height=7)
+
+
+### Separate plots
+aaa <- str_sort(unique(merged_db_1$Nation))
+for(i in 1:3){
+  merged_db_2 <- filter(merged_db_1, Nation %in% aaa[((13*i)-12):(13*i)])
+  print(ggplot(data=merged_db_2, 
+               aes(fill=PSec, x=Nation))+
+          geom_bar(position="fill",stat="count")+
+          scale_fill_manual(labels = c("Social Democratic", "Center Right",
+                                       "Liberal/Green", "Far Right",
+                                       "Other/NI", "Communist"),
+            values=c("red1","dodgerblue", "yellow", 
+            "darkblue", "ivory4","red4")) +
+          labs(x="Nation", y="Vote Share",
+               fill="Party Category") +
+          ggtitle("Party Category Vote Shares by Nation") +
+          theme_bw() + scale_x_discrete(guide=guide_axis(n.dodge=2))
+        )
+}
+```
+
+### Overall regression specification
+
+```{r, echo=T}
+table(merged_db_1$PSec)/length(merged_db_1$PSec)
+merged_db_3 <- filter(merged_db_1, PSec %in% c("Left", "CenR", "CLib.G", "FarR"))
+table(merged_db_3$PSec)/length(merged_db_3$PSec)
+merged_db_3$PSec <- as.factor(as.character(merged_db_3$PSec))
+test <- multinom(PSec~Union+Gender+PubWork+Edu+Empl+MarStat+Urban+Income+EuroTrust+Age+Gallagher_Prev_LSq+Gallagher_ENEP+Nation, data=merged_db_3, weights = merged_db_3$popweight, maxit=200)
+z <- summary(test)$coefficients/summary(test)$standard.errors
+p <- (1 - pnorm(abs(z), 0, 1)) * 2
+print(test)
+print(p)
+```
+
+### Interaction specification
+
+```{r, echo=T}
+merged_db_1$EmplFac <- as.factor(merged_db_1$Empl)
+merged_db_1$EduFac <- as.factor(as.numeric(as.numeric(merged_db_1$Edu) >= 6))
+merged_db_1$AgeFac <- as.factor(2 - (merged_db_1$Age < 25) + (merged_db_1$Age > 54))
+merged_db_1$GenderFac <- as.factor(as.numeric(merged_db_1$Gender == 0))
+
+#Vars labeled Empl/Edu/Age/Gender : Empl UE, Edu BN, Age BPA, Gender MN, UNBN omitted
+merged_db_1$UNBM <- as.numeric(merged_db_1$EmplFac == 0 & merged_db_1$EduFac == 0 & merged_db_1$AgeFac == 1 & merged_db_1$GenderFac == 1)
+merged_db_1$UNPM <- as.numeric(merged_db_1$EmplFac == 0 & merged_db_1$EduFac == 0 & merged_db_1$AgeFac == 2 & merged_db_1$GenderFac == 1)
+merged_db_1$UNPN <- as.numeric(merged_db_1$EmplFac == 0 & merged_db_1$EduFac == 0 & merged_db_1$AgeFac == 2 & merged_db_1$GenderFac == 0)
+merged_db_1$UNAM <- as.numeric(merged_db_1$EmplFac == 0 & merged_db_1$EduFac == 0 & merged_db_1$AgeFac == 3 & merged_db_1$GenderFac == 1)
+merged_db_1$UNAN <- as.numeric(merged_db_1$EmplFac == 0 & merged_db_1$EduFac == 0 & merged_db_1$AgeFac == 3 & merged_db_1$GenderFac == 0)
+merged_db_1$UBBM <- as.numeric(merged_db_1$EmplFac == 0 & merged_db_1$EduFac == 1 & merged_db_1$AgeFac == 1 & merged_db_1$GenderFac == 1)
+merged_db_1$UBBN <- as.numeric(merged_db_1$EmplFac == 0 & merged_db_1$EduFac == 1 & merged_db_1$AgeFac == 1 & merged_db_1$GenderFac == 0)
+merged_db_1$UBPM <- as.numeric(merged_db_1$EmplFac == 0 & merged_db_1$EduFac == 1 & merged_db_1$AgeFac == 2 & merged_db_1$GenderFac == 1)
+merged_db_1$UBPN <- as.numeric(merged_db_1$EmplFac == 0 & merged_db_1$EduFac == 1 & merged_db_1$AgeFac == 2 & merged_db_1$GenderFac == 0)
+merged_db_1$UBAM <- as.numeric(merged_db_1$EmplFac == 0 & merged_db_1$EduFac == 1 & merged_db_1$AgeFac == 3 & merged_db_1$GenderFac == 1)
+merged_db_1$UBAN <- as.numeric(merged_db_1$EmplFac == 0 & merged_db_1$EduFac == 1 & merged_db_1$AgeFac == 3 & merged_db_1$GenderFac == 0)
+merged_db_1$ENBM <- as.numeric(merged_db_1$EmplFac == 1 & merged_db_1$EduFac == 0 & merged_db_1$AgeFac == 1 & merged_db_1$GenderFac == 1)
+merged_db_1$ENBN <- as.numeric(merged_db_1$EmplFac == 1 & merged_db_1$EduFac == 0 & merged_db_1$AgeFac == 1 & merged_db_1$GenderFac == 0)
+merged_db_1$ENPM <- as.numeric(merged_db_1$EmplFac == 1 & merged_db_1$EduFac == 0 & merged_db_1$AgeFac == 2 & merged_db_1$GenderFac == 1)
+merged_db_1$ENPN <- as.numeric(merged_db_1$EmplFac == 1 & merged_db_1$EduFac == 0 & merged_db_1$AgeFac == 2 & merged_db_1$GenderFac == 0)
+merged_db_1$ENAM <- as.numeric(merged_db_1$EmplFac == 1 & merged_db_1$EduFac == 0 & merged_db_1$AgeFac == 3 & merged_db_1$GenderFac == 1)
+merged_db_1$ENAN <- as.numeric(merged_db_1$EmplFac == 1 & merged_db_1$EduFac == 0 & merged_db_1$AgeFac == 3 & merged_db_1$GenderFac == 0)
+merged_db_1$EBBM <- as.numeric(merged_db_1$EmplFac == 1 & merged_db_1$EduFac == 1 & merged_db_1$AgeFac == 1 & merged_db_1$GenderFac == 1)
+merged_db_1$EBBN <- as.numeric(merged_db_1$EmplFac == 1 & merged_db_1$EduFac == 1 & merged_db_1$AgeFac == 1 & merged_db_1$GenderFac == 0)
+merged_db_1$EBPM <- as.numeric(merged_db_1$EmplFac == 1 & merged_db_1$EduFac == 1 & merged_db_1$AgeFac == 2 & merged_db_1$GenderFac == 1)
+merged_db_1$EBPN <- as.numeric(merged_db_1$EmplFac == 1 & merged_db_1$EduFac == 1 & merged_db_1$AgeFac == 2 & merged_db_1$GenderFac == 0)
+merged_db_1$EBAM <- as.numeric(merged_db_1$EmplFac == 1 & merged_db_1$EduFac == 1 & merged_db_1$AgeFac == 3 & merged_db_1$GenderFac == 1)
+merged_db_1$EBAN <- as.numeric(merged_db_1$EmplFac == 1 & merged_db_1$EduFac == 1 & merged_db_1$AgeFac == 3 & merged_db_1$GenderFac == 0)
+merged_db_3 <- filter(merged_db_1, PSec %in% c("Left", "CenR", "CLib.G", "FarR"))
+merged_db_3$PSec <- as.factor(as.character(merged_db_3$PSec))
+
+
+
+
+test <- multinom(PSec~Union+PubWork+Urban+Income+EuroTrust+MarStat+
+                   UNBM+UNPM+UNPN+UNAM+UNAN+UBBM+UBBN+UBPM+UBPN+UBAM+UBAN+ENBM+
+                   ENBN+ENPM+ENPN+ENAM+ENAN+EBBM+EBBN+EBPM+EBPN+EBAM+EBAN+
+                   Gallagher_Prev_LSq+Gallagher_ENEP+Nation, data=merged_db_3, weights = merged_db_3$popweight, maxit=200)
+z <- summary(test)$coefficients/summary(test)$standard.errors
+p <- (1 - pnorm(abs(z), 0, 1)) * 2
+print(test)
+print(p)
+```
+
+### Equal weighting robustness check
+
+```{r, echo=T}
+merged_db_3 <- filter(merged_db_1, PSec %in% c("Left", "CenR", "CLib.G", "FarR"))
+merged_db_3$PSec <- as.factor(as.character(merged_db_3$PSec))
+test <- multinom(PSec~Union+Gender+PubWork+Edu+Empl+MarStat+Urban+Income+EuroTrust+Age+Gallagher_Prev_LSq+Gallagher_ENEP+Nation, data=merged_db_3, weights = merged_db_3$eqweight, maxit=200)
+z <- summary(test)$coefficients/summary(test)$standard.errors
+p <- (1 - pnorm(abs(z), 0, 1)) * 2
+print(test)
+print(p)
+```
+
+
+### Coverage Analysis: EES. EVS, ESS Factors
+```{r, echo=T}
+#Gender
+(nrow(evsnat)-sum(is.na(evsnat$Gender)))/nrow(evsnat)
+(nrow(essnat)-sum(is.na(essnat$Gender)))/nrow(essnat)
+(nrow(eesnat)-sum(is.na(eesnat$Gender)))/nrow(eesnat)
+(nrow(merged_db)-sum(is.na(merged_db$Gender)))/nrow(merged_db)
+#Age
+(nrow(evsnat)-sum(is.na(evsnat$Age)))/nrow(evsnat)
+(nrow(essnat)-sum(is.na(essnat$Age)))/nrow(essnat)
+(nrow(eesnat)-sum(is.na(eesnat$Age)))/nrow(eesnat)
+(nrow(merged_db)-sum(is.na(merged_db$Age)))/nrow(merged_db)
+#Income
+(nrow(evsnat)-sum(is.na(evsnat$Income)))/nrow(evsnat)
+(nrow(essnat)-sum(is.na(essnat$Income)))/nrow(essnat)
+(nrow(eesnat)-sum(is.na(eesnat$Income)))/nrow(eesnat)
+(nrow(merged_db)-sum(is.na(merged_db$Income)))/nrow(merged_db)
+#MarStat
+(nrow(evsnat)-sum(is.na(evsnat$MarStat)))/nrow(evsnat)
+(nrow(essnat)-sum(is.na(essnat$MarStat)))/nrow(essnat)
+(nrow(eesnat)-sum(is.na(eesnat$MarStat)))/nrow(eesnat)
+(nrow(merged_db)-sum(is.na(merged_db$MarStat)))/nrow(merged_db)
+#PubWork
+(nrow(evsnat)-sum(is.na(evsnat$PubWork)))/nrow(evsnat)
+(nrow(essnat)-sum(is.na(essnat$PubWork)))/nrow(essnat)
+(nrow(eesnat)-sum(is.na(eesnat$PubWork)))/nrow(eesnat)
+(nrow(merged_db)-sum(is.na(merged_db$PubWork)))/nrow(merged_db)
+#EuroTrust
+(nrow(evsnat)-sum(is.na(evsnat$EuroTrust)))/nrow(evsnat)
+(nrow(essnat)-sum(is.na(essnat$EuroTrust)))/nrow(essnat)
+(nrow(eesnat)-sum(is.na(eesnat$EuroTrust)))/nrow(eesnat)
+(nrow(merged_db)-sum(is.na(merged_db$EuroTrust)))/nrow(merged_db)
+#Urban
+(nrow(evsnat)-sum(is.na(evsnat$Urban)))/nrow(evsnat)
+(nrow(essnat)-sum(is.na(essnat$Urban)))/nrow(essnat)
+(nrow(eesnat)-sum(is.na(eesnat$Urban)))/nrow(eesnat)
+(nrow(merged_db)-sum(is.na(merged_db$Urban)))/nrow(merged_db)
+#Edu
+(nrow(evsnat)-sum(is.na(evsnat$Edu)))/nrow(evsnat)
+(nrow(essnat)-sum(is.na(essnat$Edu)))/nrow(essnat)
+(nrow(eesnat)-sum(is.na(eesnat$Edu)))/nrow(eesnat)
+(nrow(merged_db)-sum(is.na(merged_db$Edu)))/nrow(merged_db)
+#Empl
+(nrow(evsnat)-sum(is.na(evsnat$Empl)))/nrow(evsnat)
+(nrow(essnat)-sum(is.na(essnat$Empl)))/nrow(essnat)
+(nrow(eesnat)-sum(is.na(eesnat$Empl)))/nrow(eesnat)
+(nrow(merged_db)-sum(is.na(merged_db$Empl)))/nrow(merged_db)
+#Union
+(nrow(evsnat)-sum(is.na(evsnat$Union)))/nrow(evsnat)
+(nrow(essnat)-sum(is.na(essnat$Union)))/nrow(essnat)
+(nrow(eesnat)-sum(is.na(eesnat$Union)))/nrow(eesnat)
+(nrow(merged_db)-sum(is.na(merged_db$Union)))/nrow(merged_db)
+```
+
+### Descriptive statistics
+
+```{R, echo=T}
+mdb_1 <- merged_db
+mdb_1$Edu <- as.numeric(mdb_1$Edu)
+mdb_1$Gender <- as.numeric(mdb_1$Gender)
+mdb_1$Gender[mdb_1$Gender==2] <- 0
+
+mdb_2 <- mdb_1 %>% 
+  group_by(Nation) %>% 
+  summarise(Union=mean(Union, na.rm=T),Age=mean(Age, na.rm=T),
+            PubWork=mean(PubWork, na.rm=T),Income=mean(Income, na.rm=T),
+            Empl=mean(Empl, na.rm=T),Edu=mean(Edu, na.rm=T),
+            Gender=mean(Gender, na.rm=T), Urban=mean(Urban, na.rm=T),
+            MarStat=mean(MarStat, na.rm=T), EuroTrust=mean(EuroTrust, na.rm=T))
+#Overall means
+mean(mdb_1$Gender, na.rm=T)
+mean(mdb_1$Age, na.rm=T)
+mean(mdb_1$Income, na.rm=T)
+mean(mdb_1$MarStat, na.rm=T)
+mean(mdb_1$PubWork, na.rm=T)
+mean(mdb_1$EuroTrust, na.rm=T)
+mean(mdb_1$Urban, na.rm=T)
+mean(mdb_1$Edu, na.rm=T)
+mean(mdb_1$Empl, na.rm=T)
+mean(mdb_1$Union, na.rm=T)
+#Mean of national means
+mean(mdb_2$Gender, na.rm=T)
+mean(mdb_2$Age, na.rm=T)
+mean(mdb_2$Income, na.rm=T)
+mean(mdb_2$MarStat, na.rm=T)
+mean(mdb_2$PubWork, na.rm=T)
+mean(mdb_2$EuroTrust, na.rm=T)
+mean(mdb_2$Urban, na.rm=T)
+mean(mdb_2$Edu, na.rm=T)
+mean(mdb_2$Empl, na.rm=T)
+mean(mdb_2$Union, na.rm=T)
+#SD of national means
+sd(mdb_2$Gender, na.rm=T)
+sd(mdb_2$Age, na.rm=T)
+sd(mdb_2$Income, na.rm=T)
+sd(mdb_2$MarStat, na.rm=T)
+sd(mdb_2$PubWork, na.rm=T)
+sd(mdb_2$EuroTrust, na.rm=T)
+sd(mdb_2$Urban, na.rm=T)
+sd(mdb_2$Edu, na.rm=T)
+sd(mdb_2$Empl, na.rm=T)
+sd(mdb_2$Union, na.rm=T)
+```
+
+
+### Robustness checks
+```{r, echo=T}
+merged_db_3 <- filter(merged_db_1, PSec %in% c("Left", "CenR", "CLib.G", "FarR") 
+                      & datadummy==4)
+table(merged_db_3$PSec)/length(merged_db_3$PSec)
+merged_db_3$PSec <- as.factor(as.character(merged_db_3$PSec))
+test <- multinom(PSec~Union+Gender+PubWork+Edu+Empl+MarStat+Urban+Income+EuroTrust+Age+Gallagher_Prev_LSq+Gallagher_ENEP+Nation, data=merged_db_3, weights = merged_db_3$popweight, maxit=200)
+z <- summary(test)$coefficients/summary(test)$standard.errors
+p <- (1 - pnorm(abs(z), 0, 1)) * 2
+print(test)
+print(p)
+
+merged_db_3 <- filter(merged_db_1, PSec %in% c("Left", "CenR", "CLib.G", "FarR") 
+                      & datadummy==3)
+table(merged_db_3$PSec)/length(merged_db_3$PSec)
+merged_db_3$PSec <- as.factor(as.character(merged_db_3$PSec))
+test <- multinom(PSec~Union+Gender+PubWork+Edu+Empl+MarStat+Urban+Income+EuroTrust+Age+Gallagher_Prev_LSq+Gallagher_ENEP+Nation, data=merged_db_3, weights = merged_db_3$popweight, maxit=200)
+z <- summary(test)$coefficients/summary(test)$standard.errors
+p <- (1 - pnorm(abs(z), 0, 1)) * 2
+print(test)
+print(p)
+
+merged_db_3 <- filter(merged_db_1, PSec %in% c("Left", "CenR", "CLib.G", "FarR") 
+                      & datadummy %in% c(1,2))
+table(merged_db_3$PSec)/length(merged_db_3$PSec)
+merged_db_3$PSec <- as.factor(as.character(merged_db_3$PSec))
+test <- multinom(PSec~Union+Gender+PubWork+Edu+Empl+MarStat+Urban+Income+EuroTrust+Age+Gallagher_Prev_LSq+Gallagher_ENEP+Nation, data=merged_db_3, weights = merged_db_3$popweight, maxit=200)
+z <- summary(test)$coefficients/summary(test)$standard.errors
+p <- (1 - pnorm(abs(z), 0, 1)) * 2
+print(test)
+print(p)
+
+merged_db_3 <- filter(merged_db_1, PSec %in% c("Left", "CenR", "CLib.G", "FarR"))
+table(merged_db_3$PSec)/length(merged_db_3$PSec)
+merged_db_3$PSec <- as.factor(as.character(merged_db_3$PSec))
+test <- multinom(PSec~Union+Gender+PubWork+Edu+Empl+MarStat+Urban+Income+EuroTrust+Age+Gallagher_Prev_LSq+Gallagher_ENEP+Nation, data=merged_db_3, weights = merged_db_3$eqweight, maxit=200)
+z <- summary(test)$coefficients/summary(test)$standard.errors
+p <- (1 - pnorm(abs(z), 0, 1)) * 2
+print(test)
+print(p)
+```
+
+
+###Logit robustness check
+
+```{r, echo=T}
+summary(glm(Left~Union+Gender+PubWork+Edu+Empl+MarStat+Urban+Income+EuroTrust+Age+Gallagher_Prev_LSq+Gallagher_ENEP+Nation, data=merged_db, weights = merged_db$popweight))
+```
+
+
+
+
+
+
+
+
+
+
