@@ -1,0 +1,5 @@
+HOW TO OBTAIN EES, ESS, EVS Files
+
+EVS: evsjoint.dta is accessible from https://search.gesis.org/research_data/ZA7505
+ESS: ESS_2018.dta is accessible from https://www.europeansocialsurvey.org/data/download.html?r=9
+EES: ess_2019.dta is accessible from https://search.gesis.org/research_data/ZA7581?doi=10.4232/1.13473
